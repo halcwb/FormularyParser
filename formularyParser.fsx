@@ -16,9 +16,6 @@
 open System
 
 
-open FSharp.ExcelProvider
-
-
 Environment.CurrentDirectory <- __SOURCE_DIRECTORY__
 
 
@@ -165,6 +162,9 @@ module File =
     open System
     open System.IO
 
+    [<Literal>]
+    let cachePath = "pediatric.cache"
+
     let writeTextToFile path text =
         File.WriteAllText(path, text) 
 
@@ -190,112 +190,6 @@ module Json =
 
     let deSerialize<'T> (s: string) =
         JsonConvert.DeserializeObject<'T>(s)
-
-
-
-module ExcelParser =
-
-    type Drugs = ExcelFile<"Formularium_NicuPicu.xlsx">
-    type Doses = ExcelFile<"FORMULARIUM_doseringen.xlsx">
-
-    let drugs = new Drugs()
-    let doses = new Doses()
-
-    type Medicament =
-        {
-            GPK: string
-            MainGroup: string
-            SubGroup: string
-            Therapeutic: string
-            Label: string
-            Generic: string list
-            Quantity: float list
-            QuantityUnit: string
-            Shape: string
-            ShapeUnit: string
-            Route: string
-            DoseUnit: string
-        }
-
-    let emptyMed =
-        {
-            GPK = ""
-            MainGroup = ""
-            SubGroup = ""
-            Therapeutic = ""
-            Label = ""
-            Generic = []
-            Quantity = []
-            QuantityUnit = ""
-            Shape = ""
-            ShapeUnit = ""
-            Route = ""
-            DoseUnit = ""
-        }
-
-    let parseQuantity s =
-        if s |> String.IsNullOrEmpty then []
-        else
-            s
-            |> String.splitAt "/"
-            |> Array.map(fun s ->
-                s
-                |> Array.ofSeq
-                |> Array.filter (Char.isCapital >> not)
-                |> String.arrayConcat)
-            |> Array.filter String.notNullOrEmpty
-            |> Array.map Double.tryParse
-            |> Array.filter Option.isSome
-            |> Array.map Option.get
-            |> Array.toList
-
-    let parseGeneric s =
-        s
-        |> String.splitAt " "
-        |> Array.head
-        |> String.splitAt "/"
-        |> List.ofArray
-
-    let test1 () =
-        for r in drugs.Data do
-            r.``Sterkte$`` |> parseQuantity
-            |> printfn "%A"
-
-    let test2 () =
-        [ for r in drugs.Data do
-            if r.GPKcode |> String.notNullOrEmpty then
-                yield { emptyMed with GPK = r.GPKcode
-                                      MainGroup = r.Hoofdgroep
-                                      SubGroup = r.Subgroep
-                                      Therapeutic = r.``Therapeutische groep``
-                                      Label = r.Stofnaam
-                                      Generic = r.Stofnaam |> parseGeneric
-                                      Quantity = r.``Sterkte$`` |> parseQuantity
-                                      QuantityUnit = r.``Eenheid stof``
-                                      Shape = r.``Farm Vorm``
-                                      ShapeUnit = r.``Eenheid product``
-                                      Route = r.Toedieningsweg
-                                      DoseUnit = r.``Eenheid voorschrijven`` } ]
-        |> List.distinct
-        // check if num of generics eqs num of quantities
-        |> List.filter (fun d ->
-            d.Quantity |> List.length = 0 ||
-            d.Generic |> List.length = (d.Quantity |> List.length))
-        // check dose unit is either quantity unit or shape unit
-        // or dose unit is 'STUK'
-        |> List.filter (fun d ->
-            let check =
-                d.DoseUnit = "STUK" ||
-                d.DoseUnit = d.QuantityUnit ||
-                d.DoseUnit = d.ShapeUnit
-            if check |> not then printfn "%A" d
-            check)
-        // check uniqueness of GPK
-        |> List.length = (drugs.Data
-                          |> Seq.filter (fun r -> r.GPKcode |> String.notNullOrEmpty)
-                          |> Seq.map (fun r -> r.GPKcode)
-                          |> Seq.distinct
-                          |> Seq.length)
 
 
 
@@ -359,14 +253,16 @@ module Drug =
     type Drug = 
         { 
             Id : string
+            Atc: string
             Generic : string
             Brand : string 
             Doses : Dose list
         }
 
-    let createDrug id gen br = 
+    let createDrug id atc gen br = 
         {
             Id = id
+            Atc = atc
             Generic = gen
             Brand = br
             Doses = [] 
@@ -607,8 +503,9 @@ module WebSiteParser =
         let res = JsonValue.Load(kinderFormUrl)
         [ for v in res do
             yield Drug.createDrug (v?id.AsString()) 
-                             (v?generic_name.AsString()) 
-                             (v?branded_name.AsString()) ]
+                                  ""
+                                  (v?generic_name.AsString()) 
+                                  (v?branded_name.AsString()) ]
 
     let medications : unit -> Drug.Drug list = Memoization.memoize _medications
 
@@ -675,35 +572,55 @@ module WebSiteParser =
     let addDoses (m: Drug.Drug) = 
         async {
             let! doc = getDocAsync m.Id m.Generic
+            let atc =
+                match doc 
+                    |> getItemTypeFromDoc "http://schema.org/MedicalCode" |> List.ofSeq with
+                | h::_-> h |> getItemPropString "codeValue"
+                | _ -> ""
             let getPar = getParent doc
-            return { m with Doses = [ 
-                for i in doc |> getItemTypeFromDoc "http://schema.org/MedicalIndication" do
-                    let n = i |> getItemPropString "name"
-                    let i' = i |> getPar |> getPar
-                    yield { Indication = n; Routes = [ 
-                        for r in i' |> getItemProp "administrationRoute" do
-                            let n = r |> getItemPropString "administrationRoute"
-                            let r' = r |> getPar
-                            yield { Name = n; Schedules = [ 
-                                for s in r' |> getItemTypeFromNode "http://schema.org/DoseSchedule" do
-                                    let tp = s |> getItemPropString "targetPopulation"
-                                    let dv = s |> getItemPropString "doseValue"
-                                    let du = s |> getItemPropString "doseUnit"
-                                    let fr = s |> getItemPropString "frequency"
-                                    yield 
-                                        { 
-                                            Drug.Target = tp
-                                            Drug.FrequencyText = fr 
-                                            Drug.Frequency = fr |> FormularyParser.mapFrequency
-                                            Drug.ValueText = dv
-                                            Drug.Value = dv |> FormularyParser.mapValue |> snd
-                                            Drug.Unit = du
-                                        }
-                            ]}  
-                    ]}
-                ] 
-            }
+            return 
+                { m with 
+                    Atc = atc
+                    Doses = 
+                        [ 
+                            for i in doc |> getItemTypeFromDoc "http://schema.org/MedicalIndication" do
+                                let n = i |> getItemPropString "name"
+                                let i' = i |> getPar |> getPar
+                                yield 
+                                    { 
+                                        Indication = n
+                                        Routes = 
+                                            [ 
+                                                for r in i' |> getItemProp "administrationRoute" do
+                                                    let n = r |> getItemPropString "administrationRoute"
+                                                    let r' = r |> getPar
+                                                    yield 
+                                                        { 
+                                                            Name = n
+                                                            Schedules = 
+                                                                [ 
+                                                                    for s in r' |> getItemTypeFromNode "http://schema.org/DoseSchedule" do
+                                                                        let tp = s |> getItemPropString "targetPopulation"
+                                                                        let dv = s |> getItemPropString "doseValue"
+                                                                        let du = s |> getItemPropString "doseUnit"
+                                                                        let fr = s |> getItemPropString "frequency"
+                                                                        yield 
+                                                                            { 
+                                                                                Drug.Target = tp
+                                                                                Drug.FrequencyText = fr 
+                                                                                Drug.Frequency = fr |> FormularyParser.mapFrequency
+                                                                                Drug.ValueText = dv
+                                                                                Drug.Value = dv |> FormularyParser.mapValue |> snd
+                                                                                Drug.Unit = du
+                                                                            }
+                                                                ]
+                                                        }  
+                                            ]
+                                }
+                        ] 
+                }
         }
+
 
     let _parseWebSite ns =
         match ns with 
@@ -721,11 +638,11 @@ module WebSiteParser =
     let cacheFormulary (ds : Drug.Drug []) =
         _parseWebSite []
         |> Json.serialize
-        |> File.writeTextToFile "cache.txt"
+        |> File.writeTextToFile File.cachePath
 
     let _getFormulary () =
-        if File.exists ("cache.txt") then 
-            "cache.txt"
+        if File.cachePath |> File.exists then 
+            File.cachePath
             |> File.readAllLines
             |> String.concat ""
             |> Json.deSerialize<Drug.Drug[]>
@@ -739,9 +656,10 @@ module WebSiteParser =
 
 
     
-WebSiteParser.getFormulary ()
-|> Array.filter (fun d ->
-    d.Generic.Contains("Amoxicilline")
-)
-|> Array.iter (printfn "%A")
+//WebSiteParser.getFormulary ()
+//|> Array.filter (fun d ->
+//    d.Generic.Contains("Paracetamol")
+//)
+//|> Array.iter (printfn "%A")
+
 

@@ -3,3 +3,4 @@ source https://nuget.org/api/v2
 nuget ExcelProvider
 nuget FSharp.Data
 nuget HtmlAgilityPack
+nuget Newtonsoft.Json
