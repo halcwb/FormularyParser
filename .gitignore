@@ -11,6 +11,9 @@
 # Add todo list
 !ToDo.txt
 
+# Add cache file
+!cache.txt
+
 # Add md files
 !*.md
 
