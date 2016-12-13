@@ -638,9 +638,48 @@ module FormularyParser =
 
         let replaceList =
             [
+                ("(zwangerschapsduur > 35 weken) a terme neonaat", "preg ; > 35 weken")
+                ("geboortegewicht", "bwght:")
+                ("neonaten zwangerschapsduur", "preg:")
+                ("extreem prematuren zwangerschapsduur", "preg:")
+                ("prematuren zwangerschapsduur", "preg:")
+                ("zwangerschapsduur", "preg:")
+                ("prematuren postmenstruele leeftijd", "preg:")
+                ("premature en a terme neonaten postnatale leeftijd", "pca:")
+                ("extreem prematuren postconceptionele leeftijd", "pca:")
+                ("prematuur postconceptionele leeftijd", "pca:")
+                ("prematuren postconceptionele leeftijd", "pca:")
+                ("postnatale leeftijd", "")
+                ("postconceptionele leeftijd", "pca:")
+
+                ("a terme neonaat tot", "#aterm ; ")
+                ("a terme neonaat", "#aterm ; ")
+                ("a terme neonaten", "#aterm ; ")
+                ("neonaten", "#neon ; ")
+                ("prematuren postnatale leeftijd", "#prem ; ")
+                ("prematuren", "#prem ; ")
+                ("menstruerende meisjes/vrouwen, vanaf circa", "#girl ; ")
+                ("menstruerende meisjes/vrouwen, circa", "#girl ; ")
+                ("jongens", "#boy ; ")
+                ("meisjes", "#girl ; ")
+                (" na menarche, ", "#girl ; ")
+                ("zuigelingen en kinderen", "")
+
+                ("1e vaccinatie:", "")
+                ("2e vaccinatie:", "")
+                ("3e vaccinatie:", "")
+                ("4e vaccinatie:", "")
+
+                ("dagen", "day")
+                ("jaar", "year")
+                ("weken", "week")
+                ("maanden", "month")
+                ("maand", "month")
+
                 (" tot ", " - ")
                 (" en ", " ; ")
                 ("<", "None -")
+
                 ("≥ 1 kg", "1 kg - None")
                 ("≥ 1,5 kg", "1,5 kg - None")
                 ("≥ 2,5 kg", "2,5 kg - None")
@@ -704,40 +743,6 @@ module FormularyParser =
                 ("≥ 16 jaar", "16 jaar - None")
                 ("≥ 18 jaar", "18 jaar - None")
 
-                ("geboortegewicht", "bwght:")
-                ("neonaten zwangerschapsduur", "preg:")
-                ("extreem prematuren zwangerschapsduur", "preg:")
-                ("prematuren zwangerschapsduur", "preg:")
-                ("zwangerschapsduur", "preg:")
-                ("prematuren postmenstruele leeftijd", "preg:")
-                ("extreem prematuren postconceptionele leeftijd", "pca:")
-                ("prematuur postconceptionele leeftijd", "pca:")
-                ("prematuren postconceptionele leeftijd", "pca:")
-                ("postnatale leeftijd", "")
-                ("postconceptionele leeftijd", "pca:")
-
-                ("a terme neonaat", "#aterm ; ")
-                ("a terme neonaten", "#aterm ; ")
-                ("neonaten", "#neon ; ")
-                ("prematuren postnatale leeftijd", "#prem ; ")
-                ("prematuren", "#prem ; ")
-                ("menstruerende meisjes/vrouwen, vanaf circa", "#girl ; ")
-                ("menstruerende meisjes/vrouwen, circa", "#girl ; ")
-                ("jongens", "#boy ; ")
-                ("meisjes", "#girl ; ")
-                (" na menarche, ", "#girl ; ")
-                ("zuigelingen ; kinderen ", "")
-
-                ("1e vaccinatie:", "")
-                ("2e vaccinatie:", "")
-                ("3e vaccinatie:", "")
-                ("4e vaccinatie:", "")
-
-                ("dagen", "day")
-                ("jaar", "year")
-                ("weken", "week")
-                ("maanden", "month")
-                ("maand", "month")
             ]
 
 
@@ -745,8 +750,10 @@ module FormularyParser =
             let s' = 
                 replaceList
                 |> List.fold (fun a (os, ns) -> 
+                    let os = os |> String.toLower
                     a |> String.replace os ns
-                ) (s |> String.toLower)
+                ) (s |> String.trim |> String.toLower)
+
             match s' |> String.splitAt ";" |> Array.toList with
             | [s1;s2;s3] ->
                 match s1 with
@@ -781,7 +788,9 @@ module FormularyParser =
                     s1 |> parseAllAge ,
                     s1 |> parseAllWeight
 
-            | _ -> s |> failParse
+            | _ -> 
+                s'
+                |> failParse
 
             |> Target
 
@@ -823,7 +832,12 @@ module WebSiteParser =
     let getDocAsync = getDoc HtmlDocument.AsyncLoad
 
 
-    let getParent d n =
+    let getParentFromNode n1 n2 =
+        n1
+        |> HtmlNode.descendants false (HtmlNode.elements >> Seq.exists ((=) n2))
+        |> Seq.head
+
+    let getParentFromDoc d n =
         d
         |> HtmlDocument.descendants false (HtmlNode.elements >> Seq.exists ((=) n))
         |> Seq.head
@@ -866,13 +880,13 @@ module WebSiteParser =
                 printfn "\n-- Indication: %A" name
                 let ind' =
                     ind
-                    |> getParent doc
-                    |> getParent doc
+                    |> getParentFromDoc doc
+                    |> getParentFromDoc doc
 
                 for r in ind' |> getItemProp "administrationRoute" do
                     let route = r |> getItemPropString "administrationRoute"
                     printfn "\n-- Route: %A" route
-                    let r' = r |> getParent doc
+                    let r' = r |> getParentFromDoc doc
 
                     for dose in r' |> getItemTypeFromNode "http://schema.org/DoseSchedule" do
                         let targetPop = dose |> getItemPropString "targetPopulation"
@@ -884,57 +898,61 @@ module WebSiteParser =
                         printfn "Dose: %s %s %s" doseVals doseUnits freq
 
 
-    let addDoses (m: Drug.Drug) = 
-        async {
-            let! doc = getDocAsync m.Id m.Generic
+    let parseDocForDoses (m: Drug.Drug) doc = 
             let atc =
                 match doc 
                     |> getItemTypeFromDoc "http://schema.org/MedicalCode" |> List.ofSeq with
                 | h::_-> h |> getItemPropString "codeValue"
                 | _ -> ""
-            let getPar = getParent doc
-            return 
-                { m with 
-                    Atc = atc
-                    Doses = 
-                        [ 
-                            for i in doc |> getItemTypeFromDoc "http://schema.org/MedicalIndication" do
-                                let n = i |> getItemPropString "name"
-                                let i' = i |> getPar |> getPar
-                                yield 
-                                    { 
-                                        Indication = n
-                                        Routes = 
-                                            [ 
-                                                for r in i' |> getItemProp "administrationRoute" do
-                                                    let n = r |> getItemPropString "administrationRoute"
-                                                    let r' = r |> getPar
-                                                    yield 
-                                                        { 
-                                                            Name = n
-                                                            Schedules = 
-                                                                [ 
-                                                                    for s in r' |> getItemTypeFromNode "http://schema.org/DoseSchedule" do
-                                                                        let tp = s |> getItemPropString "targetPopulation"
-                                                                        let dv = s |> getItemPropString "doseValue"
-                                                                        let du = s |> getItemPropString "doseUnit"
-                                                                        let fr = s |> getItemPropString "frequency"
-                                                                        yield 
-                                                                            { 
-                                                                                Drug.TargetText = tp |> String.trim
-                                                                                Drug.Target = tp |> TargetParser.parse
-                                                                                Drug.FrequencyText = fr |> String.trim
-                                                                                Drug.Frequency = fr |> FrequencyParser.parse
-                                                                                Drug.ValueText = dv |> String.trim
-                                                                                Drug.Value = dv |> MinMaxParser.parse |> snd
-                                                                                Drug.Unit = du |> String.trim
-                                                                            }
-                                                                ]
-                                                        }  
-                                            ]
-                                }
-                        ] 
-                }
+            let getPar = getParentFromDoc doc
+            { m with 
+                Atc = atc
+                Doses = 
+                    [ 
+                        for i in doc |> getItemTypeFromDoc "http://schema.org/MedicalIndication" do
+                            let n = i |> getItemPropString "name"
+                            let i' = i |> getPar |> getPar
+                            yield 
+                                { 
+                                    Indication = n
+                                    Routes = 
+                                        [ 
+                                            for r in i' |> getItemProp "administrationRoute" do
+                                                let n = r |> getItemPropString "administrationRoute"
+                                                let r' = r |> getParentFromNode i' 
+                                                printfn "yielding:\n%A" r'
+                                                yield 
+                                                    { 
+                                                        Name = n
+                                                        Schedules = 
+                                                            [ 
+                                                                for s in r' |> getItemTypeFromNode "http://schema.org/DoseSchedule" do
+                                                                    let tp = s |> getItemPropString "targetPopulation"
+                                                                    let dv = s |> getItemPropString "doseValue"
+                                                                    let du = s |> getItemPropString "doseUnit"
+                                                                    let fr = s |> getItemPropString "frequency"
+                                                                    yield 
+                                                                        { 
+                                                                            Drug.TargetText = tp |> String.trim
+                                                                            Drug.Target = tp |> TargetParser.parse
+                                                                            Drug.FrequencyText = fr |> String.trim
+                                                                            Drug.Frequency = fr |> FrequencyParser.parse
+                                                                            Drug.ValueText = dv |> String.trim
+                                                                            Drug.Value = dv |> MinMaxParser.parse |> snd
+                                                                            Drug.Unit = du |> String.trim
+                                                                        }
+                                                            ]
+                                                    }  
+                                        ]
+                            }
+                    ] 
+            }
+
+
+    let addDoses (m: Drug.Drug) = 
+        async {
+            let! doc = getDocAsync m.Id m.Generic
+            return doc |> parseDocForDoses m
         }
 
 
@@ -973,7 +991,8 @@ module WebSiteParser =
     let getFormulary : unit -> Drug.Drug [] = Memoization.memoize _getFormulary
 
 
-//WebSiteParser.getFormulary ()
+
+// WebSiteParser.getFormulary ()
 //|> Array.collect (fun d ->
 //    d.Doses
 //    |> List.toArray
@@ -1259,4 +1278,7 @@ module WebSiteParser =
 //
 //        |> Target
 //
+
+//WebSiteParser.getDocSync "324" "meropenem"
+//|> WebSiteParser.parseDocForDoses (Drug.createDrug "324" "meropenem" "" "")
 
