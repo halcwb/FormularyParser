@@ -990,21 +990,19 @@ module WebSiteParser =
 
     let getFormulary : unit -> Drug.Drug [] = Memoization.memoize _getFormulary
 
-
-
-// WebSiteParser.getFormulary () |> Array.length
-//|> Array.collect (fun d ->
-//    d.Doses
-//    |> List.toArray
-//    |> Array.collect (fun dose -> 
-//        dose.Routes 
-//        |> List.map (fun r -> r.Name)
-//        |> List.toArray
-//    )
-//)
-//|> Array.distinct
-//|> Array.sort
-//|> Array.iter (printfn "%s")
+    let getRoutes () =
+        getFormulary () //|> Array.length
+        |> Array.collect (fun d ->
+            d.Doses
+            |> List.toArray
+            |> Array.collect (fun dose -> 
+                dose.Routes 
+                |> List.map (fun r -> r.Name)
+                |> List.toArray
+            )
+        )
+        |> Array.distinct
+        |> Array.sort
 
 //
 //WebSiteParser.getFormulary () //|> Array.length
@@ -1300,3 +1298,4 @@ module WebSiteParser =
 //        )
 //    )
 //) |> Array.length
+
