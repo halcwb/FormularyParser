@@ -663,3 +663,17 @@ module WebSiteParser =
 //|> Array.iter (printfn "%A")
 
 
+FormularyParser.freqMap
+|> List.map snd
+|> List.distinct
+|> List.iter (fun fr ->
+    match fr with
+    | Some fr' ->
+        match fr' with 
+        | Drug.Frequency.Frequency minmax | Drug.Frequency.PRN minmax ->
+            printfn "%i - %i per %i %s" minmax.Min minmax.Max minmax.Time minmax.Unit
+        | Drug.Frequency.AnteNoctum -> printfn "Antenoctum"
+        | Drug.Frequency.Once  -> printfn "Once"
+        | Drug.Frequency.Bolus -> printfn "Bolus"
+    | None -> printfn ""
+)
